@@ -8,6 +8,8 @@
 
 ## Inference Script for HEM
 we use [accelerate](https://huggingface.co/docs/accelerate/en/index) for multi-GPUs processing
+
+We prepare the weights of HEM at: https://huggingface.co/Lhaippp/DMHomo/blob/main/HEM.pth
 ```
 # Please set the path of 'CA-Homo Dataset' by [test_data_dir] in HEM/experiments
 accelerate launch hem_evaluate.py --model_dir HEM/experiments --restore_file HEM.pth -ow
