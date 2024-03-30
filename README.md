@@ -7,9 +7,9 @@
   3. Release the training scripts for **HEM** and **DGM**.
 
 ## Inference Script for HEM
+we use [accelerate](https://huggingface.co/docs/accelerate/en/index) for multi-GPUs processing
 ```
-# we use accelerate (https://huggingface.co/docs/accelerate/en/index) for multi-GPUs processing
-# Please set the path of [CA-Homo Dataset] by test_data_dir in HEM/experiments
+# Please set the path of 'CA-Homo Dataset' by [test_data_dir] in HEM/experiments
 accelerate launch hem_evaluate.py --model_dir HEM/experiments --restore_file HEM.pth -ow
 ```
 
