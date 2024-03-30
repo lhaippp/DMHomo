@@ -1,0 +1,79 @@
+{
+    "test_data_dir": "/data/denoising-diffusion-pytorch/work/20221231.cond.rgbHomoFlow.9i6o.plW1/20230101_CAHomo_Testset",
+    "net_type": "HomoGAN",
+    "eval_type": [
+        "val",
+        "test"
+    ],
+    "exp_name": "ToG-HEM-Github",
+    "major_metric": "AVG",
+    "save_mode": "local",
+    "random_homo": 0.10,
+    "learning_rate": 1e-4,
+    "enable_mask_on_supLoss": true,
+    "mask_reg_loss_weight": 0.1,
+    "mask_nll_loss_weight": 1,
+    "sup_loss_weight": 1,
+    "unsup_loss_weight": 0,
+    "partial_data_number": 1200000,
+    "normalize_mask": false,
+    "gamma": 0.8,
+    "train_batch_size": 24,
+    "eval_batch_size": 8,
+    "num_epochs": 10,
+    "train_num_steps": 2000,
+    "num_workers": 8,
+    "cpu": 8,
+    "memory": 49600,
+    "gpu": 4,
+    "rho": 16,
+    "crop_size": [
+        320,
+        576
+    ],
+    "ori_size": [
+        360,
+        640
+    ],
+    "generate_size": 256,
+    "in_channels": 2,
+    "patch_size": 4,
+    "in_chans": 2,
+    "num_basis": 8,
+    "embed_dim": 24,
+    "depths": [
+        2,
+        4,
+        6
+    ],
+    "layer_depth": [
+        3,
+        2,
+        1
+    ],
+    "num_heads": [
+        3,
+        12,
+        24
+    ],
+    "num_decoder_heads": 4,
+    "num_decoder_layers": 4,
+    "window_size": 8,
+    "mlp_ratio": 3,
+    "qkv_bias": true,
+    "qk_scale": null,
+    "drop_rate": 0,
+    "drop_path_rate": 0,
+    "attn_drop_rate": 0,
+    "ape": false,
+    "patch_norm": true,
+    "use_checkpoint": false,
+    "shift": 4,
+    "cls_weight": 0.1,
+    "dynamic_apha": false,
+    "mask_use_fea": true,
+    "mk_weight": 0.2,
+    "h_weight": 1,
+    "use_open": true,
+    "pretrain_phase": true
+}
