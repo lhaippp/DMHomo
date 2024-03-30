@@ -6,6 +6,13 @@
   2. Release the generated dataset based on the [**CA-Homo Dataset**](https://github.com/JirongZhang/DeepHomography) and the trained **DGM**.
   3. Release the training scripts for **HEM** and **DGM**.
 
+## Inference Script for HEM
+```
+# we use accelerate (https://huggingface.co/docs/accelerate/en/index) for multi-GPUs processing
+# Please set the path of [CA-Homo Dataset] by test_data_dir in HEM/experiments
+accelerate launch hem_evaluate.py --model_dir HEM/experiments --restore_file HEM.pth -ow
+```
+
 ## Thanks
 Our framework builds upon previous benchmarking works; we offer our gratitude to them, including, but not limited to:
 - [denoising-diffusion-pytorch (lucidrains)](https://github.com/lucidrains/denoising-diffusion-pytorch)
