@@ -2,7 +2,7 @@
 [dl.acm.org/doi/10.1145/3652207](https://dl.acm.org/doi/10.1145/3652207)
 
 ## To-Do List
-  1. Release the pre-trained models and inference code for the **HEM** (Homography Estimator Module) and **DGM** (Data Generator Module).
+  1. Done! ~~Release the pre-trained models and inference code for the **HEM** (Homography Estimator Module) and **DGM** (Data Generator Module).~~
   2. Release the generated dataset based on the [**CA-Homo Dataset**](https://github.com/JirongZhang/DeepHomography) and the trained **DGM**.
   3. Release the training scripts for **HEM** and **DGM**.
 
