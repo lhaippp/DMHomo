@@ -6,7 +6,7 @@
   2. Release the generated dataset based on the [**CA-Homo Dataset**](https://github.com/JirongZhang/DeepHomography) and the trained **DGM**.
   3. Release the training scripts for **HEM** and **DGM**.
 
-## Inference Script for HEM
+## Homography Estimator Module (HEM)
 we use [accelerate](https://huggingface.co/docs/accelerate/en/index) for multi-GPUs processing
 
 We prepare the weights of HEM at: https://huggingface.co/Lhaippp/DMHomo/blob/main/HEM.pth
