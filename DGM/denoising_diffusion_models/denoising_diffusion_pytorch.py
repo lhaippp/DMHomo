@@ -11,7 +11,6 @@ import imageio
 import inspect
 
 import numpy as np
-# import nori2 as nori
 import torch.nn.functional as F
 
 from pathlib import Path
@@ -34,7 +33,6 @@ from ema_pytorch import EMA
 from accelerate import Accelerator
 
 from denoising_diffusion_models.version import __version__
-# from Things.flyingthings import flyingthings_nori
 
 # constants
 
@@ -913,67 +911,6 @@ class GHOFTestDataset(Dataset):
         return self.transform(img)
 
 
-class FrameDatasetNori(Dataset):
-
-    def __init__(
-        self,
-        benchmark_path,
-        image_size,
-        exts=['jpg', 'jpeg', 'png', 'tiff'],
-        augment_horizontal_flip=False,
-        convert_image_to=None,
-    ):
-        self.samples = self.collect_samples()
-
-        # self.fetcher = nori.Fetcher()
-
-        self.image_size = image_size
-
-        maybe_convert_fn = partial(
-            convert_image_to_fn,
-            convert_image_to) if exists(convert_image_to) else nn.Identity()
-
-        self.transform = T.Compose([
-            T.Lambda(maybe_convert_fn),
-            T.Resize(image_size),
-            # T.RandomCrop(image_size),
-            T.RandomHorizontalFlip()
-            if augment_horizontal_flip else nn.Identity(),
-            T.CenterCrop(image_size),
-            T.ToTensor(),
-        ])
-
-    def collect_samples(self):
-        files = np.load("/data/denoising-diffusion-pytorch/dataset/GOF9K.npy",
-                        allow_pickle=True).item()
-        self.sources = list(files.keys())
-        return files
-
-    def bytes2np(self, data, c=3, h=600, w=800):
-        data = np.fromstring(data, np.float32)
-        data = data.reshape((h, w, c))
-        return data
-
-    def __len__(self):
-        return len(self.sources)
-
-    def __getitem__(self, idx):
-        file = self.samples[idx]
-        # print(file)
-
-        h, w = file["h"], file["w"]
-
-        img1_bytes = self.fetcher.get(file["img1"])
-        # img2_bytes = self.fetcher.get(file["img2"])
-        # gyro_filed_bytes = self.fetcher.get(file["gyro_field"])
-
-        img1 = self.bytes2np(img1_bytes, c=3, h=h, w=w)
-        # img2 = self.bytes2np(img2_bytes, c=3, h=h, w=w)
-        # gyro_filed = self.bytes2np(gyro_filed_bytes, c=2, h=h, w=w)
-        img = Image.fromarray(np.uint8(img1))
-        return self.transform(img)
-
-
 def imdecode(data, require_chl3=True, require_alpha=False):
     img = cv2.imdecode(np.fromstring(data, np.uint8), cv2.IMREAD_UNCHANGED)
 
@@ -998,8 +935,6 @@ class HomoTrainData(Dataset):
         augment_horizontal_flip=False,
         convert_image_to=None,
     ):
-        # 路径
-        # self.nf = nori.Fetcher()
 
         self.data_infor = open(benchmark_path, 'r').readlines()
 
@@ -1039,9 +974,6 @@ class HomoTrainData(Dataset):
 
         img = Image.fromarray(np.uint8(img1))
         return self.transform(img).float()
-
-
-# fetcher = nori.Fetcher()
 
 
 def mesh_grid_np(B, H, W):
@@ -1238,146 +1170,6 @@ class PseudoCondition(Dataset):
         rgb_homoflow_forward = flow_to_image(motionf)
 
         img = np.concatenate((ganhomo_mask, rgb_homoflow_forward, motionf),
-                             axis=2)
-        return self.transform(img).float(), scene_class
-
-
-class UnHomoTrainData(Dataset):
-
-    def __init__(
-        self,
-        benchmark_path,
-        image_size,
-        exts=['jpg', 'jpeg', 'png', 'tiff'],
-        augment_horizontal_flip=False,
-        convert_image_to=None,
-        total_data_slice_idx=1,
-        data_slice_idx=0,
-        isGenerate=False,
-    ):
-        # assert phase in ['train', 'val', 'test']
-        # 参数预设
-        self.nori_info = np.load(
-            '/data/dmhomo/work/20230310.BackBoneganHomo.NaiveMask.ConstrainLoss/dataset/dmhomo_em2/dmHomo_em2.npy',
-            allow_pickle=True).item()
-        self.nori_info_nids = list(self.nori_info.keys())
-
-        nori_length = len(self.nori_info_nids)
-        slice_nori_length = (nori_length // total_data_slice_idx)
-        self.nori_info_nids = self.nori_info_nids[data_slice_idx *
-                                                  slice_nori_length:
-                                                  (data_slice_idx + 1) *
-                                                  slice_nori_length]
-
-        self.image_size = image_size
-
-        maybe_convert_fn = partial(
-            convert_image_to_fn,
-            convert_image_to) if exists(convert_image_to) else nn.Identity()
-
-        self.transform = T.Compose([
-            T.ToTensor(),
-            # T.RandomHorizontalFlip() if augment_horizontal_flip else nn.Identity(),
-            # T.CenterCrop(image_size),
-        ])
-
-        # for unit test
-        self.cnt = 0
-
-        self.isGenerate = isGenerate
-
-        print(f"the first nori id is {self.nori_info_nids[0]}")
-        time.sleep(10)
-
-    def __len__(self):
-        print(f"The length of UnHomoTrainData is {len(self.nori_info_nids)}")
-        return len(self.nori_info_nids)
-
-    def __getitem__(self, idx):
-        # img loading
-        # print(self.nori_info_nids[idx])
-        buf = fetcher.get(self.nori_info_nids[idx])
-        data = pickle.loads(buf)
-        # print(data)
-
-        img1, img2 = data['img1'].transpose(1, 2, 0), data['img2'].transpose(
-            1, 2, 0)
-        # print(f"img1:[{img1.shape} min: {np.min(img1)} - max: {np.max(img1)}] - img2:[{img2.shape} min: {np.min(img2)} - max: {np.max(img2)}]")
-        img1, img2 = cv2.resize(
-            img1, (self.image_size, self.image_size)), cv2.resize(
-                img2, (self.image_size, self.image_size))
-
-        homof, homob = data['homof'].squeeze(), data['homob'].squeeze()
-        # print(f"homof:[{homof.shape}] - homob:[{homob.shape}]")
-        homof = adapt_homography_to_preprocessing_v3(360, 640, homof,
-                                                     self.image_size,
-                                                     self.image_size)
-        homob = adapt_homography_to_preprocessing_v3(360, 640, homob,
-                                                     self.image_size,
-                                                     self.image_size)
-
-        maskf, maskb = data['maskf'].transpose(1, 2,
-                                               0), data['maskb'].transpose(
-                                                   1, 2, 0)
-        maskf, maskb = cv2.resize(
-            maskf, (self.image_size, self.image_size)), cv2.resize(
-                maskb, (self.image_size, self.image_size))
-        maskf, maskb = maskf[:, :,
-                             None].repeat(3,
-                                          axis=2), maskb[:, :,
-                                                         None].repeat(3,
-                                                                      axis=2)
-        # print(f"maskf:[{maskf.shape} min: {np.min(maskf)} - max: {np.max(maskf)}] - maskb:[{maskb.shape} min: {np.min(maskb)} - max: {np.max(maskb)}]")
-        maskf_warp = cv2.warpPerspective(maskf, homof, (256, 256))
-        mask_fusion = maskf_warp * maskb
-        mask_fusion = (mask_fusion - np.min(mask_fusion)) / np.max(mask_fusion)
-
-        ganhomo_mask = data['ganhomo_mask']
-        ganhomo_mask = cv2.resize(ganhomo_mask,
-                                  (self.image_size, self.image_size),
-                                  interpolation=cv2.INTER_NEAREST)
-        ganhomo_mask = ganhomo_mask[:, :, None].repeat(3, axis=2)
-        # print(
-        #     f"ganhomo_mask:[{ganhomo_mask.shape} min: {np.min(ganhomo_mask)} - max: {np.max(ganhomo_mask)}]")
-
-        erode_kernel = np.ones((3, 3), dtype=np.uint8)
-        ganhomo_mask = cv2.erode(ganhomo_mask, erode_kernel, iterations=1)
-        ganhomo_mask = cv2.dilate(ganhomo_mask, erode_kernel, iterations=1)
-        # mask = mask[:, :, None]
-
-        scene_class = 0
-
-        motionf = homo_to_flow(homof[None, None], self.image_size,
-                               self.image_size)
-
-        # rgb_homoflow = flow_to_image_luo(motion)
-        rgb_homoflow_forward = flow_to_image(motionf)
-
-        # unit test
-        # self.cnt += 1
-        # print(f"self.cnt: {self.cnt}")
-        # img1_warp = cv2.warpPerspective(img1, homof, (256, 256))
-        # img2_warp = cv2.warpPerspective(img2, homob, (256, 256))
-
-        # imageio.mimsave(
-        #     f"unit_test/test_async_nori_{self.cnt}.gif",
-        #     [
-        #         np.concatenate(
-        #             (img1, img1_warp, img1, maskf, maskf_warp, mask_fusion, ganhomo_mask), 1),
-        #         np.concatenate(
-        #             (img2, img2, img2_warp, maskb, maskb, mask_fusion, ganhomo_mask), 1),
-        #         # np.concatenate((img1, img1_warp, img1), 1)[:, :, ::-1] * 255,
-        #         # np.concatenate((img2, img2, img2_warp), 1)[:, :, ::-1] * 255,
-        #     ],
-        #     'GIF',
-        #     duration=0.5,
-        # )
-        # if self.cnt >= 2:
-        #     raise Exception
-
-        # print(f"mask shape {mask.shape}")
-        img = np.concatenate((img1, img2, ganhomo_mask, rgb_homoflow_forward,
-                              motionf, mask_fusion),
                              axis=2)
         return self.transform(img).float(), scene_class
 
