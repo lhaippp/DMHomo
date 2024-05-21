@@ -5,8 +5,8 @@ import argparse
 
 import numpy as np
 
-from denoising_diffusion_pytorch.denoising_diffusion_pytorch import Trainer
-from denoising_diffusion_pytorch.classifier_free_guidance import Unet, GaussianDiffusion
+from denoising_diffusion_models.denoising_diffusion_pytorch import Trainer
+from denoising_diffusion_models.classifier_free_guidance import Unet, GaussianDiffusion
 
 parser = argparse.ArgumentParser()
 parser.add_argument('-c', type=int, default=0)
