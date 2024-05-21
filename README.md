@@ -25,22 +25,28 @@ We prepare all the necessary data of training DGM at: https://huggingface.co/Lha
 3. Trainset_Masks_HomoGAN.zip -> Pseudo Dominant Plane Masks
 
 # the download scripts are: 
-
 from huggingface_hub import hf_hub_download
 
 hf_hub_download(repo_id="Lhaippp/DMHomo", filename="BasesHomo_small.npy", local_dir="/root/test/trainset/Contant-Aware-DeepH-Data/Data/Train")
 ```
 
-Please follow the script in [CAHomo](https://github.com/JirongZhang/DeepHomography) to prepare the train data.
+Please follow the script in [CAHomo](https://github.com/JirongZhang/DeepHomography) to prepare the train data. And set the path at [class UnHomoTrainData(Dataset)](https://github.com/lhaippp/DMHomo/blob/1a4257fe2c34af9561c16459e59fbe8fb1aec5d2/DGM/denoising_diffusion_models/denoising_diffusion_pytorch.py#L1045).
 
 ```
 # to set the training config
 accelerate config
-# start training then Voilà!
-# the default setting is bs=128 & lr=5e-4 that requires about 300G GPU memory
-# we also test the bs=48 & lr=1e-4 that can be runned on several 2080Tis
+
+# start training!
 accelerate launch demo.py
 ```
+
+the default setting is bs=128 & lr=5e-4 that requires about 300G GPU memory. We also test the bs=48 & lr=1e-4 that can be runned on several 2080Tis, some qualitative results are:
+
+![](58.gif "Magic Gardens")
+- where the first column is generated pairs: [im1, im2]
+- the second column is warped pairs: [im1, warpPerspective(im2, condition_homo)]
+- the third column is condition dominant plane mask
+- the last column is condition_homo (homography -> optical flow -> rgb flow)
 
 ## Homography Estimator Module (HEM)
 we use [accelerate](https://huggingface.co/docs/accelerate/en/index) for multi-GPUs processing
