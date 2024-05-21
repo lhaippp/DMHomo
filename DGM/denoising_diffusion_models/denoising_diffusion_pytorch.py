@@ -1,10 +1,8 @@
 import os
 import cv2
 import pdb
-import time
 import math
 import copy
-import glob
 import torch
 import pickle
 import imageio
@@ -32,7 +30,7 @@ from ema_pytorch import EMA
 
 from accelerate import Accelerator
 
-from denoising_diffusion_models.version import __version__
+from denoising_diffusion_pytorch.version import __version__
 
 # constants
 
@@ -492,8 +490,7 @@ class GaussianDiffusion(nn.Module):
             loss_type='l1',
             objective='pred_noise',
             beta_schedule='cosine',
-            # p2 loss weight, from https://arxiv.org/abs/2204.00227 - 0 is equivalent to weight of 1 across time - 1. is recommended
-            p2_loss_weight_gamma=0.,
+            p2_loss_weight_gamma=0.,  # p2 loss weight, from https://arxiv.org/abs/2204.00227 - 0 is equivalent to weight of 1 across time - 1. is recommended
             p2_loss_weight_k=1,
             ddim_sampling_eta=1.):
         super().__init__()
@@ -540,8 +537,8 @@ class GaussianDiffusion(nn.Module):
 
         # helper function to register buffer from float64 to float32
 
-        def register_buffer(name, val):
-            return self.register_buffer(name, val.to(torch.float32))
+        register_buffer = lambda name, val: self.register_buffer(
+            name, val.to(torch.float32))
 
         register_buffer('betas', betas)
         register_buffer('alphas_cumprod', alphas_cumprod)
@@ -561,8 +558,8 @@ class GaussianDiffusion(nn.Module):
 
         # calculations for posterior q(x_{t-1} | x_t, x_0)
 
-        posterior_variance = betas * \
-            (1. - alphas_cumprod_prev) / (1. - alphas_cumprod)
+        posterior_variance = betas * (1. - alphas_cumprod_prev) / (
+            1. - alphas_cumprod)
 
         # above: equal to 1. / (1. / (1. - alpha_cumprod_tm1) + alpha_t / beta_t)
 
@@ -590,8 +587,10 @@ class GaussianDiffusion(nn.Module):
             extract(self.sqrt_recipm1_alphas_cumprod, t, x_t.shape) * noise)
 
     def predict_noise_from_start(self, x_t, t, x0):
-        return ((extract(self.sqrt_recip_alphas_cumprod, t, x_t.shape) * x_t -
-                 x0) / extract(self.sqrt_recipm1_alphas_cumprod, t, x_t.shape))
+        return (
+            (extract(self.sqrt_recip_alphas_cumprod, t, x_t.shape) * x_t - x0) / \
+            extract(self.sqrt_recipm1_alphas_cumprod, t, x_t.shape)
+        )
 
     def predict_v(self, x_start, t, noise):
         return (extract(self.sqrt_alphas_cumprod, t, x_start.shape) * noise -
@@ -689,8 +688,9 @@ class GaussianDiffusion(nn.Module):
             -1, total_timesteps - 1, steps=sampling_timesteps + 1
         )  # [-1, 0, 1, 2, ..., T-1] when sampling_timesteps == total_timesteps
         times = list(reversed(times.int().tolist()))
-        # [(T-1, T-2), (T-2, T-3), ..., (1, 0), (0, -1)]
-        time_pairs = list(zip(times[:-1], times[1:]))
+        time_pairs = list(
+            zip(times[:-1],
+                times[1:]))  # [(T-1, T-2), (T-2, T-3), ..., (1, 0), (0, -1)]
 
         img = torch.randn(shape, device=device)
 
@@ -703,9 +703,8 @@ class GaussianDiffusion(nn.Module):
                                    device=device,
                                    dtype=torch.long)
             self_cond = x_start if self.self_condition else None
-            pred_noise, x_start, * \
-                _ = self.model_predictions(
-                    img, time_cond, self_cond, clip_x_start=clip_denoised)
+            pred_noise, x_start, *_ = self.model_predictions(
+                img, time_cond, self_cond, clip_x_start=clip_denoised)
 
             if time_next < 0:
                 img = x_start
@@ -721,8 +720,8 @@ class GaussianDiffusion(nn.Module):
             noise = torch.randn_like(img)
 
             img = x_start * alpha_next.sqrt() + \
-                c * pred_noise + \
-                sigma * noise
+                  c * pred_noise + \
+                  sigma * noise
 
         img = unnormalize_to_zero_to_one(img)
         # unnormalize flow from [0, 1] to [-1, 1] and rescale with 255
@@ -911,71 +910,6 @@ class GHOFTestDataset(Dataset):
         return self.transform(img)
 
 
-def imdecode(data, require_chl3=True, require_alpha=False):
-    img = cv2.imdecode(np.fromstring(data, np.uint8), cv2.IMREAD_UNCHANGED)
-
-    assert img is not None, 'failed to decode'
-    if img.ndim == 2 and require_chl3:
-        img = img.reshape(img.shape + (1, ))
-    if img.shape[2] == 1 and require_chl3:
-        img = np.tile(img, (1, 1, 3))
-    if img.ndim == 3 and img.shape[2] == 3 and require_alpha:
-        assert img.dtype == np.uint8
-        img = np.concatenate([img, np.ones_like(img[:, :, :1]) * 255], axis=2)
-    return img
-
-
-class HomoTrainData(Dataset):
-
-    def __init__(
-        self,
-        benchmark_path,
-        image_size,
-        exts=['jpg', 'jpeg', 'png', 'tiff'],
-        augment_horizontal_flip=False,
-        convert_image_to=None,
-    ):
-
-        self.data_infor = open(benchmark_path, 'r').readlines()
-
-        self.image_size = image_size
-
-        maybe_convert_fn = partial(
-            convert_image_to_fn,
-            convert_image_to) if exists(convert_image_to) else nn.Identity()
-
-        self.transform = T.Compose([
-            T.Lambda(maybe_convert_fn),
-            T.Resize(image_size),
-            # T.RandomCrop(image_size),
-            T.RandomHorizontalFlip()
-            if augment_horizontal_flip else nn.Identity(),
-            T.CenterCrop(image_size),
-            T.ToTensor(),
-        ])
-
-    def __len__(self):
-        # return size of dataset
-        return len(self.data_infor)
-
-    def __getitem__(self, idx):
-
-        # img loading
-        img_names = self.data_infor[idx]
-        img_names = img_names.split(' ')
-
-        data1 = self.nf.get(img_names[0])  # Read image according to data list
-        data2 = self.nf.get(img_names[1][:-1])
-
-        img1 = imdecode(data1)
-        img2 = imdecode(data2)
-
-        img = img1 if random() <= 0.5 else img2
-
-        img = Image.fromarray(np.uint8(img1))
-        return self.transform(img).float()
-
-
 def mesh_grid_np(B, H, W):
     # mesh grid
     x_base = np.arange(0, W)
@@ -1108,7 +1042,7 @@ LF = [
 ]
 
 
-class PseudoCondition(Dataset):
+class UnHomoTrainData(Dataset):
 
     def __init__(
         self,
@@ -1117,19 +1051,21 @@ class PseudoCondition(Dataset):
         exts=['jpg', 'jpeg', 'png', 'tiff'],
         augment_horizontal_flip=False,
         convert_image_to=None,
-        total_data_slice_idx=1,
-        data_slice_idx=0,
-        isGenerate=False,
+        device=None,
     ):
-        # assert phase in ['train', 'val', 'test']
-        self.cond_npys = sorted(glob.glob(os.path.join(benchmark_path,
-                                                       '*npy')))
-        slice_cond_length = (len(self.cond_npys) // total_data_slice_idx)
-        # slice the whole dataset into sub-sets to sample on multiple GPUs
-        self.cond_npys = self.cond_npys[data_slice_idx *
-                                        slice_cond_length:(data_slice_idx +
-                                                           1) *
-                                        slice_cond_length]
+
+        # 训练图片对
+        self.trainset_pth = '/root/test/trainset/Contant-Aware-DeepH-Data/Data/Train'
+        # self.list_path = self.base_path + '/train.txt'
+        # self.data_infor = open(self.list_path, 'r').readlines()
+
+        self.device = device
+
+        # BasesHomo计算的homo,伪标签
+        self.pseudo_labels = np.load(
+            '/root/test/trainset/Contant-Aware-DeepH-Data/Data/Train/BasesHomo_small.npy',
+            allow_pickle=True).item()
+        self.im1_im2_names = list(self.pseudo_labels.keys())
 
         self.image_size = image_size
 
@@ -1139,38 +1075,91 @@ class PseudoCondition(Dataset):
             # T.CenterCrop(image_size),
         ])
 
-        # for unit test
-        self.cnt = 0
+        self.unit_test = False
 
-        self.isGenerate = isGenerate
-
-        print(
-            f"the first npy pth is {self.cond_npys[0]}, be sure to check they are different on each GPU"
-        )
-        time.sleep(10)
+    def prefix2label(self, prefix):
+        if prefix in RE:
+            ret = 0
+        elif prefix in LT:
+            ret = 1
+        elif prefix in LL:
+            ret = 2
+        elif prefix in SF:
+            ret = 3
+        elif prefix in LF:
+            ret = 4
+        return ret
 
     def __len__(self):
-        print(f"The length of UnHomoTrainData is {len(self.cond_npys)}")
-        return len(self.cond_npys)
+        print(f"The length of UnHomoTrainData is {len(self.im1_im2_names)}")
+        return len(self.im1_im2_names)
 
     def __getitem__(self, idx):
         # img loading
-        # data: [mask, (homo_forward, homo_backward)]
-        data = np.load(self.cond_npys[idx], allow_pickle=True).item()
+        # img_names = self.data_infor[idx].replace('\n', '')
+        # video_names = img_names.split('/')[0]
+        # img_names = img_names.split(' ')
+        # save_name = img_names[0].split('.')[0].split(
+        #     '/')[1] + '_' + img_names[1].split('.')[0].split('/')[1]
+        im1_im2_name = self.im1_im2_names[idx]
 
-        homof, homob = data['homo'][0].squeeze(), data['homo'][1].squeeze()
+        dir_name = im1_im2_name.split('_')[0]
+        im1_name = "_".join(im1_im2_name.split('_')[:2]) + '.png'
+        im2_name = "_".join(im1_im2_name.split('_')[2:]) + '.png'
 
-        ganhomo_mask = data['mask']
+        pseudo_label = self.pseudo_labels[im1_im2_name]
+        # pseudo_label包含list: [homo_b, homo_f]
+        # homo_f is from img1 -> img2, homo_b is from img2 -> img1
+        homo_b, homo_f = pseudo_label[0], pseudo_label[1]
+        
+        # mask_fusion = pseudo_label[3]
+        mask_fusion = np.load(os.path.join(self.trainset_pth, 'HomoGAN_Bug_Masks', im1_im2_name + '.npy'))
+
+        img1 = cv2.imread(os.path.join(self.trainset_pth, dir_name, im1_name)).astype(np.float32) / 255.
+        img2 = cv2.imread(os.path.join(self.trainset_pth, dir_name, im2_name)).astype(np.float32) / 255.
+
+        img1, img2 = cv2.resize(
+            img1, (self.image_size, self.image_size)), cv2.resize(
+                img2, (self.image_size, self.image_size))
+
+        # homoGAN mask
+        erode_kernel = np.ones((3, 3), dtype=np.uint8)
+
+        # 对mask进行形态学操作
+        mask = mask_fusion.squeeze().astype(np.float32)
+        mask = cv2.resize(mask, (self.image_size, self.image_size),
+                          interpolation=cv2.INTER_NEAREST)
+        mask = cv2.erode(mask, erode_kernel, iterations=1)
+        mask = cv2.dilate(mask, erode_kernel, iterations=1)
+        mask = mask[:, :, None]
 
         scene_class = 0
 
-        motionf = homo_to_flow(homof[None, None], self.image_size,
-                               self.image_size)
-        # we need to convert flow field into RGB flow, details plz see ablation study
-        rgb_homoflow_forward = flow_to_image(motionf)
+        homo = adapt_homography_to_preprocessing_v3(360, 640, homo_f,
+                                                    self.image_size,
+                                                    self.image_size)
+        if self.unit_test:
+            img1_warp = cv2.warpPerspective(img1, homo, (self.image_size, self.image_size))
 
-        img = np.concatenate((ganhomo_mask, rgb_homoflow_forward, motionf),
-                             axis=2)
+            buf1 = np.concatenate(
+                [img1, img1_warp, mask.repeat(3, 2)], axis=1)
+            buf2 = np.concatenate([img2, img2, mask.repeat(3, 2)], axis=1)
+            imageio.mimsave(f'{self.device}_{idx}_unit_test.gif', [(buf1 * 255).astype(np.uint8), (buf2 * 255).astype(np.uint8)], duration=0.5, loop=0)
+            # with imageio.get_writer(f'{self.device}_unit_test.gif',
+            #                         mode='I',
+            #                         duration=1,
+            #                         loop=0) as writer:
+            #     writer.append_data((buf1 * 255).astype(np.uint8))
+            #     writer.append_data((buf2 * 255).astype(np.uint8))
+
+            # raise Exception('GanHomoTrainData doing unit test!')
+
+        motion = homo_to_flow(homo[None, None], self.image_size,
+                              self.image_size)
+
+        rgb_homoflow = flow_to_image(motion)
+
+        img = np.concatenate((img1, img2, mask, rgb_homoflow, motion), axis=2)
         return self.transform(img).float(), scene_class
 
 
@@ -1185,8 +1174,9 @@ class CATestSet(Dataset):
         convert_image_to=None,
     ):
         # 路径
-        # files_path = '/data/for_jr/' CVPR2021_list pair_path_ECCV
-        self.npy_list = os.path.join(benchmark_path, "test.txt")
+        self.npy_list = os.path.join(
+            benchmark_path, "test.txt"
+        )  # files_path = '/data/for_jr/' CVPR2021_list pair_path_ECCV
         self.npy_path = os.path.join(benchmark_path, "pt/")  # NPYFile Npz_Set
         self.image_path = os.path.join(benchmark_path, "img/")
 
@@ -1249,6 +1239,7 @@ class CATestSet(Dataset):
         motion = homo_to_flow(homo[None, None], self.image_size,
                               self.image_size)
 
+        # rgb_homoflow = flow_to_image_luo(motion)
         rgb_homoflow = flow_to_image(motion)
 
         img = np.concatenate((img1, img2, rgb_homoflow, motion), axis=2)
@@ -1308,6 +1299,22 @@ def norm_grid(v_grid):
     return v_grid_norm.permute(0, 2, 3, 1)  # BHW2
 
 
+# def visulize_flow(all_images):
+#     np_flow = all_images.detach().cpu().numpy().transpose([0, 2, 3, 1])
+
+#     vis_flow = []
+
+#     for _, flow in enumerate(np_flow):
+#         vis_flow.append(flow_to_image_luo(flow))
+
+#     vis_flow_np = np.array(vis_flow, dtype=np.float32)
+#     vis_flow_np = vis_flow_np.transpose([0, 3, 1, 2])
+
+#     vis_flow_torch = torch.from_numpy(vis_flow_np)
+#     # print("vis_flow_torch shape ", vis_flow_torch.shape)
+#     return vis_flow_torch
+
+
 def flow_to_image_luo(flow, display=False):
     """
 
@@ -1343,8 +1350,8 @@ def flow_to_image_luo(flow, display=False):
             col += RY
 
             # YG
-            colorwheel[col:col + YG, 0] = 255 - \
-                np.transpose(np.floor(255 * np.arange(0, YG) / YG))
+            colorwheel[col:col + YG, 0] = 255 - np.transpose(
+                np.floor(255 * np.arange(0, YG) / YG))
             colorwheel[col:col + YG, 1] = 255
             col += YG
 
@@ -1355,8 +1362,8 @@ def flow_to_image_luo(flow, display=False):
             col += GC
 
             # CB
-            colorwheel[col:col + CB, 1] = 255 - \
-                np.transpose(np.floor(255 * np.arange(0, CB) / CB))
+            colorwheel[col:col + CB, 1] = 255 - np.transpose(
+                np.floor(255 * np.arange(0, CB) / CB))
             colorwheel[col:col + CB, 2] = 255
             col += CB
 
@@ -1367,8 +1374,8 @@ def flow_to_image_luo(flow, display=False):
             col += +BM
 
             # MR
-            colorwheel[col:col + MR, 2] = 255 - \
-                np.transpose(np.floor(255 * np.arange(0, MR) / MR))
+            colorwheel[col:col + MR, 2] = 255 - np.transpose(
+                np.floor(255 * np.arange(0, MR) / MR))
             colorwheel[col:col + MR, 0] = 255
 
             return colorwheel
@@ -1495,7 +1502,7 @@ def visulize_flow(all_images):
     return vis_flow_torch
 
 
-def postProcess(torch_tensor, all_ganHomomask, flows):
+def postProcess(torch_tensor, mask, flows):
     img1s = torch_tensor[:, :3]
     img2s = torch_tensor[:, 3:6]
 
@@ -1503,11 +1510,10 @@ def postProcess(torch_tensor, all_ganHomomask, flows):
 
     flows_vis = visulize_flow(flows).cuda(flows.device)
 
-    all_ganHomomask_rgb = all_ganHomomask.repeat(1, 3, 1, 1)
+    mask_rgb = mask.repeat(1, 3, 1, 1)
 
-    buf1 = torch.concat([img1s, img1s, all_ganHomomask_rgb, flows_vis], -1)
-    buf2 = torch.concat([img2s, warp_img2s, all_ganHomomask_rgb, flows_vis],
-                        -1)
+    buf1 = torch.concat([img1s, img1s, mask_rgb, flows_vis], -1)
+    buf2 = torch.concat([img2s, warp_img2s, mask_rgb, flows_vis], -1)
     return buf1, buf2
 
 
@@ -1535,10 +1541,16 @@ def postProcess_cv2(imgs, homos, rank):
 
 
 def make_gif(img1, img2, name):
+    if not os.path.exists('sample_gif_results'):
+        os.mkdir('sample_gif_results')
+
     img1, img2 = cv2.imread(img1), cv2.imread(img2)
-    with imageio.get_writer(f'sample_gif_results/{name}.gif',
-                            mode='I',
-                            duration=0.5) as writer:
+    with imageio.get_writer(
+            f'sample_gif_results/{name}.gif',
+            mode='I',
+            duration=0.5,
+            loop=0,
+    ) as writer:
         writer.append_data(img1[:, :, ::-1])
         writer.append_data(img2[:, :, ::-1])
 
@@ -1557,8 +1569,8 @@ def get_grid(batch_size, H, W, start=0):
     yy = yy.view(1, 1, H, W).repeat(batch_size, 1, 1, 1)
     grid = torch.cat((xx, yy), 1).float()
 
-    grid[:, :2, :, :] = grid[:, :2, :, :] + \
-        start  # add the coordinate of left top
+    grid[:, :
+         2, :, :] = grid[:, :2, :, :] + start  # add the coordinate of left top
     return grid
 
 
@@ -1649,7 +1661,7 @@ def homo_gen(flow):
     return homo
 
 
-def saveTrainPair(torch_tensor, ganHomo_mask, flows):
+def saveTrainPair(torch_tensor, mask, flows):
     assert torch.max(
         torch_tensor
     ) <= 1, f"image should be normalized to [0, 1], not[{torch.min(torch_tensor)}, {torch.max(torch_tensor)}]"
@@ -1663,10 +1675,7 @@ def saveTrainPair(torch_tensor, ganHomo_mask, flows):
     homos = homo_gen(flows)
     homos = homos.detach().cpu().numpy().squeeze()
     # print(f"imgs_np shape {imgs_np.shape} | homos shape {homos.shape}")
-    return {
-        "imgs": imgs_np,
-        "homos": homos,
-    }
+    return {"imgs": imgs_np, "homos": homos}
 
 
 class Trainer(object):
@@ -1693,17 +1702,27 @@ class Trainer(object):
         convert_image_to=None,
         num_worker=8,
         total_data_slice_idx=1,
-        data_slice_idx=0,
+        data_slice_idx=1,
         shuffle=True,
-        isGenerate=False,
+        mixed_precision_type = 'fp16',
     ):
         super().__init__()
 
-        self.accelerator = Accelerator(
-            split_batches=split_batches,
-            mixed_precision='fp16' if fp16 else 'no')
+        from datetime import timedelta
+        from accelerate import DistributedDataParallelKwargs
+        from accelerate.utils import InitProcessGroupKwargs
 
-        self.accelerator.native_amp = amp
+        os.environ['NCCL_BLOCKING_WAIT'] = '0'  # not to enforce timeout
+
+        ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
+        timedelta_kwargs = InitProcessGroupKwargs(timeout=timedelta(seconds=1800 * 1000))
+
+        # accelerator
+        self.accelerator = Accelerator(
+        split_batches=split_batches,
+        mixed_precision=mixed_precision_type if amp else "no",
+        kwargs_handlers=[ddp_kwargs, timedelta_kwargs],
+        )
 
         self.model = diffusion_model
 
@@ -1719,14 +1738,12 @@ class Trainer(object):
         self.image_size = diffusion_model.image_size
 
         # dataset and dataloader
-        self.ds = PseudoCondition(
+        self.ds = UnHomoTrainData(
             folder,
             self.image_size,
             augment_horizontal_flip=augment_horizontal_flip,
             convert_image_to=convert_image_to,
-            total_data_slice_idx=total_data_slice_idx,
-            data_slice_idx=data_slice_idx,
-            isGenerate=isGenerate,
+            device=self.accelerator.device,
         )
 
         dl = DataLoader(self.ds,
@@ -1739,6 +1756,7 @@ class Trainer(object):
         self.dl = cycle(dl)
 
         # optimizer
+
         self.opt = Adam(diffusion_model.parameters(),
                         lr=train_lr,
                         betas=adam_betas)
@@ -1790,7 +1808,9 @@ class Trainer(object):
         if not self.accelerator.is_main_process:
             return
 
-        data = torch.load(str(milestone), map_location=device)
+        data = torch.load(str(self.results_folder / f'model-{milestone}.pt'),
+                          map_location=device)
+        # data = torch.load(os.path.join(self.results_folder, f'model-{milestone}.pt'), map_location=device)
 
         model = self.accelerator.unwrap_model(self.model)
         model.load_state_dict(data['model'])
@@ -1844,6 +1864,10 @@ class Trainer(object):
                     self.ema.to(device)
                     self.ema.update()
 
+                    if self.step != 0 and self.step % 500 == 0:
+                        # set 9999 to latest checkpoint
+                        self.save(9999)
+
                     if self.step != 0 and self.step % self.save_and_sample_every == 0:
                         self.ema.ema_model.eval()
 
@@ -1852,45 +1876,42 @@ class Trainer(object):
                             batches = num_to_groups(self.num_samples,
                                                     self.batch_size)
                             # specifiy a certain flow
-                            # data[0]: (img1, img2, ganhomo_mask, rgb_homoflow_forward, motionf, mask_fusion)
-                            # data[0] channels: (3, 3, 3, 3, 2, 3)
-                            # print(f"data[0] shape: {data[0].shape}")
-                            ganHomo_mask = data[0][:, 6:7].repeat(
+                            # data[0]: np.concatenate((img1, img2, mask, rgb_homoflow, motion), axis=2)
+                            # data[0] channels: (3, 3, 1, 3, 2)
+                            mask = data[0][:, -6:-5].repeat(
                                 self.num_samples, 1, 1, 1)[:self.num_samples]
-                            rgb_flows = data[0][:, 9:12].repeat(
+                            rgb_flows = data[0][:, -5:-2].repeat(
                                 self.num_samples, 1, 1, 1)[:self.num_samples]
-                            flows = data[0][:, 12:14].repeat(
-                                self.num_samples, 1, 1, 1)[:self.num_samples]
-                            dmHomo_mask = data[0][:, 14:15].repeat(
+                            flows = data[0][:, -2:].repeat(
                                 self.num_samples, 1, 1, 1)[:self.num_samples]
                             all_images_list = list(
                                 map(
                                     lambda n: self.ema.ema_model.sample(
-                                        classes=torch.randint(0, 1,
+                                        classes=torch.randint(0, 5,
                                                               (n, )).cuda(),
-                                        rgb_flow=rgb_flows[:n, ],
-                                        flow=flows[:n, ],
-                                        ganHomo_mask=ganHomo_mask[:n, ],
-                                        dmHomo_mask=dmHomo_mask[:n, ],
-                                    ), batches))
+                                        rgb_flow=rgb_flows[
+                                            :n,
+                                        ],
+                                        flow=flows[
+                                            :n,
+                                        ],
+                                        mask=mask[
+                                            :n,
+                                        ]), batches))
 
-                        all_images, all_ganHomomask, all_flows, all_dmHomomask = [], [], [], []
+                        all_images, all_mask, all_flows = [], [], []
                         for buf in all_images_list:
                             all_images.append(buf[0])
-                            all_ganHomomask.append(buf[1])
+                            all_mask.append(buf[1])
                             all_flows.append(buf[2])
-                            all_dmHomomask.append(buf[3])
 
                         all_images = torch.cat(all_images, dim=0)
-                        all_ganHomomask = torch.cat(all_ganHomomask, dim=0)
+                        all_mask = torch.cat(all_mask, dim=0)
                         all_flows = torch.cat(all_flows, dim=0)
-                        all_dmHomomask = torch.cat(all_dmHomomask, dim=0)
 
-                        img1s, warp_img2s = postProcess(
-                            all_images,
-                            all_ganHomomask=all_ganHomomask,
-                            flows=all_flows,
-                            all_dmHomomask=all_dmHomomask)
+                        img1s, warp_img2s = postProcess(all_images,
+                                                        mask=all_mask,
+                                                        flows=all_flows)
 
                         # from rgb to bgr
                         permute = [2, 1, 0]
@@ -1923,11 +1944,17 @@ class Trainer(object):
         data = next(self.dl)
 
         # specifiy a certain flow
-        # data[0]: (ganhomo_mask, rgb_homoflow_forward, motionf)
-        # data[0] channels: (3, 3, 2)
-        ganHomo_mask = data[0][:, :1].to(rank)
-        rgb_flows = data[0][:, 3:6].to(rank)
-        flows = data[0][:, 6:].to(rank)
+        rgb_flows = data[0][:, -5:-2].to(rank)
+        flows = data[0][:, -2:].to(rank)
+
+        mask = data[0][:, -6:-5].to(rank)
+
+        # _idx = torch.randperm(mask.shape[0])
+        # mask_random = mask[_idx].view(mask.size()).to(rank)
+
+        # flows = torch.cat([flows, flows], axis=0)
+        # rgb_flows = torch.cat([rgb_flows, rgb_flows], axis=0)
+        # mask = torch.cat([mask, mask_random], axis=0)
 
         with torch.no_grad():
             all_images = self.ema.ema_model.sample(
@@ -1935,15 +1962,12 @@ class Trainer(object):
                 classes=data[1].cuda(rank),
                 rgb_flow=rgb_flows,
                 flow=flows,
-                ganHomo_mask=ganHomo_mask,
+                mask=mask,
             )
 
-        # img, ganHomo_mask, flow, dmHomo_mask
-        ret = saveTrainPair(
-            all_images[0],
-            ganHomo_mask=all_images[1],
-            flows=all_images[2],
-        )
+        ret = saveTrainPair(all_images[0],
+                            mask=all_images[1],
+                            flows=all_images[2])
 
         if step % 100 == 0:
             _square_bs = math.floor(math.sqrt(all_images[0].shape[0]))
@@ -1952,14 +1976,11 @@ class Trainer(object):
 
             img1s, warp_img2s = postProcess(
                 all_images[0][:_square_bs],
-                all_ganHomomask=all_images[1][:_square_bs],
+                mask=all_images[1][:_square_bs],
                 flows=all_images[2][:_square_bs],
             )
             permute = [2, 1, 0]
             img1s, warp_img2s = img1s[:, permute], warp_img2s[:, permute]
-
-            if not os.path.exists('generate_training_pairs'):
-                os.mkdir('generate_training_pairs')
 
             utils.save_image(
                 img1s,
@@ -1969,10 +1990,6 @@ class Trainer(object):
                 warp_img2s,
                 f'generate_training_pairs/idx_{idx}_step_{step}_rank_{rank}_sample-target_flowRemap.png',
                 nrow=int(math.sqrt(_square_bs)))
-
-            if not os.path.exists('sample_gif_results'):
-                os.mkdir('sample_gif_results')
-
             make_gif(
                 f'generate_training_pairs/idx_{idx}_step_{step}_rank_{rank}_sample-source_flowRemap.png',
                 f'generate_training_pairs/idx_{idx}_step_{step}_rank_{rank}_sample-target_flowRemap.png',
@@ -2002,13 +2019,3 @@ class Trainer(object):
             )
 
         return ret
-
-    def generate_test_samples(self):
-        img1_ls, img2_ls, img1_img2_ls = [], [], []
-        with tqdm(total=len(self.ca_test_dl)) as t:
-            for batch in self.ca_test_dl:
-                img1_ls.append(batch[:, :3])
-                # t.set_description(desc=print_str)
-                t.update()
-
-        return torch.cat(img1_ls)
