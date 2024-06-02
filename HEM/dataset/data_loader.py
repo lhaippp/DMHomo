@@ -5,8 +5,10 @@ import random
 import pickle
 import imageio
 import logging
+import inspect
 
 import numpy as np
+import torch.nn as nn
 import torch.utils.data
 
 from HEM.utils_operations.flow_and_mapping_operations import convert_mapping_to_flow, from_homography_to_pixel_wise_mapping
@@ -57,6 +59,200 @@ def make_align_heatmap(img1, img2):
     heat_map = cv2.applyColorMap((heat_map * 255).astype(np.uint8),
                                  cv2.COLORMAP_JET).astype(np.uint8)
     return heat_map
+
+
+def mesh_grid(B, H, W):
+    # mesh grid
+    x_base = torch.arange(0, W).repeat(B, H, 1)  # BHW
+    y_base = torch.arange(0, H).repeat(B, W, 1).transpose(1, 2)  # BHW
+
+    base_grid = torch.stack([x_base, y_base], 1)  # B2HW
+    return base_grid
+
+
+def norm_grid(v_grid):
+    _, _, H, W = v_grid.size()
+
+    # scale grid to [-1,1]
+    v_grid_norm = torch.zeros_like(v_grid)
+    v_grid_norm[:, 0, :, :] = 2.0 * v_grid[:, 0, :, :] / (W - 1) - 1.0
+    v_grid_norm[:, 1, :, :] = 2.0 * v_grid[:, 1, :, :] / (H - 1) - 1.0
+    return v_grid_norm.permute(0, 2, 3, 1)  # BHW2
+
+
+def flow_warp(x, flow12, pad="border", mode="bilinear"):
+    B, _, H, W = x.size()
+
+    base_grid = mesh_grid(B, H, W).type_as(x)  # B2HW
+
+    v_grid = norm_grid(base_grid + flow12)  # BHW2
+    if "align_corners" in inspect.getfullargspec(torch.nn.functional.grid_sample).args:
+        im1_recons = nn.functional.grid_sample(x, v_grid, mode=mode, padding_mode=pad, align_corners=True)
+    else:
+        im1_recons = nn.functional.grid_sample(x, v_grid, mode=mode, padding_mode=pad)
+    return im1_recons
+
+
+class DGMTrainData(Dataset):
+
+    def __init__(self, params, phase='train'):
+        assert phase in ['train', 'val', 'test']
+
+        # 参数预设
+        self.mean_I = np.array([118.93, 113.97, 102.60]).reshape(1, 1, 3)
+        self.std_I = np.array([69.85, 68.81, 72.45]).reshape(1, 1, 3)
+
+        self.params = params
+        self.crop_size = self.params.crop_size
+        self.ori_h, self.ori_w = self.params.ori_size[0], self.params.ori_size[1]
+        self.rho = self.params.rho
+
+        # 训练图片对
+        self.npy_path = glob.glob('/root/test/0521_lr5e-4_bs128/traindata/samples/*npy*')
+
+        self.cnt = 0
+        self.unit_test = False
+
+    def __len__(self):
+        print(f"The length of DGMTrainData is {len(self.npy_path)}")
+        return len(self.npy_path)
+
+    def __getitem__(self, idx):
+        # _buf contain im1_im2 (6, h, w) and homo12 (3, 3)
+        _buf = np.load(self.npy_path[idx], allow_pickle=True).item()
+        
+        homo_f, homo_b = _buf['homo12'], None
+        homo_gt, _ = homo_f, homo_b
+
+        im1_im2 = _buf['img12']
+        im1_im2 = im1_im2.transpose(1, 2, 0)
+        img1 = im1_im2[..., :3]
+        img2 = im1_im2[..., 3:]
+        h, w, _ = img1.shape
+
+        # 生成图像对分辨率 256 256 -> 需要resize到360 640
+        # img1 = cv2.resize(img1, (640, 360))
+        # img2 = cv2.resize(img2, (640, 360))
+
+        if h != self.ori_h or w != self.ori_w:
+            homo_gt = homo_scale(h, w, homo_gt, self.ori_h, self.ori_w)
+            homo_gt_inv = np.linalg.inv(homo_gt)
+
+            img1, img2 = cv2.resize(img1, (self.ori_w, self.ori_h)), cv2.resize(
+                img2, (self.ori_w, self.ori_h))
+
+        imgs_rgb_full = torch.cat((torch.Tensor(img1), torch.Tensor(
+            img2)), dim=-1).permute(2, 0, 1).float() / 255.
+
+        # unit test for async nori
+        if self.unit_test:
+            self.cnt += 1
+            img1_warp = cv2.warpPerspective(img1, homo_gt, (640, 360))
+            imageio.mimsave(
+                f"unit_test/test_async_nori_{self.cnt}.gif",
+                [
+                    np.concatenate((img1, img1_warp), 1)[:, :, ::-1],
+                    np.concatenate((img2, img2), 1)[:, :, ::-1],
+                ],
+                'GIF',
+                duration=0.5,
+                loop=0,
+            )
+
+        img1, img2, img1_patch, img2_patch, flow_gt_b, flow_gt_f, flow_gt_b_patch, flow_gt_f_patch, start = self.data_aug(
+            img1, img2, homo_gt, homo_gt_inv)
+        
+        if self.unit_test:
+            img2_remap = flow_warp(img2.permute(2, 0, 1)[None], flow_gt_f)[0]
+            img2_patch_remap = flow_warp(img2_patch.permute(2, 0, 1)[None], flow_gt_f_patch)[0]
+
+            buf1 = np.concatenate((img1.detach().cpu().numpy() * 255, img1.detach().cpu().numpy() * 255), 1).astype(np.uint8)
+            buf2 = np.concatenate((img2.detach().cpu().numpy() * 255, img2_remap.detach().cpu().numpy().transpose(1, 2, 0) * 255), 1).astype(np.uint8)
+            imageio.mimsave(
+                f"unit_test/test_flow_remap_{self.cnt}.gif",
+                [
+                    np.repeat(buf1, 3, axis=-1),
+                    np.repeat(buf2, 3, axis=-1),
+                ],
+                'GIF',
+                duration=0.5,
+                loop=0,
+            )
+            buf1 = np.concatenate((img1_patch.detach().cpu().numpy() * 255, img1_patch.detach().cpu().numpy() * 255), 1).astype(np.uint8)
+            buf2 = np.concatenate((img2_patch.detach().cpu().numpy() * 255, img2_patch_remap.detach().cpu().numpy().transpose(1, 2, 0) * 255), 1).astype(np.uint8)
+            imageio.mimsave(
+                f"unit_test/test_flow_remap_patch_{self.cnt}.gif",
+                [
+                    np.repeat(buf1, 3, axis=-1),
+                    np.repeat(buf2, 3, axis=-1),
+                ],
+                'GIF',
+                duration=0.5,
+                loop=0,
+            )
+            if self.cnt > 10:
+                raise Exception
+
+
+        imgs_gray_full = torch.cat(
+            (img1, img2), dim=2).permute(2, 0, 1).float()
+        imgs_gray_patch = torch.cat(
+            (img1_patch, img2_patch), dim=2).permute(2, 0, 1).float()
+        flow_gt_full = torch.cat((flow_gt_b, flow_gt_f), dim=1).squeeze(0)
+        flow_gt_patch = torch.cat(
+            (flow_gt_b_patch, flow_gt_f_patch), dim=1).squeeze(0)
+        start = torch.Tensor(start).reshape(2, 1, 1).float()
+        # output dict
+        data_dict = {
+            "imgs_gray_full": imgs_gray_full,
+            "imgs_gray_patch": imgs_gray_patch,
+            "flow_gt_full": flow_gt_full,
+            "flow_gt_patch": flow_gt_patch,
+            "start": start,
+            "imgs_rgb_full": imgs_rgb_full,
+        }
+        return data_dict
+
+    def data_aug(self, img1, img2, homo_gt, homo_gt_inv, start=None, normalize=True, gray=True):
+
+        def random_crop_tt(img1, img2, homo_gt, homo_gt_inv, start):
+            height, width = img1.shape[:2]
+            patch_size_h, patch_size_w = self.crop_size
+
+            if start is None:
+                x = random.randint(self.rho, width - self.rho - patch_size_w)
+                y = random.randint(self.rho, height - self.rho - patch_size_h)
+                start = [x, y]
+            else:
+                x, y = start
+            img1_patch = img1[y:y + patch_size_h, x:x + patch_size_w, :]
+            img2_patch = img2[y:y + patch_size_h, x:x + patch_size_w, :]
+
+            flow_gt_b = homo_convert_to_flow(homo_gt_inv, (height, width))
+            flow_gt_f = homo_convert_to_flow(homo_gt, (height, width))
+            flow_gt_b_patch = flow_gt_b[:, :,
+                                        y:y + patch_size_h, x:x + patch_size_w]
+            flow_gt_f_patch = flow_gt_f[:, :,
+                                        y:y + patch_size_h, x:x + patch_size_w]
+            return img1, img2, img1_patch, img2_patch, flow_gt_b, flow_gt_f, flow_gt_b_patch, flow_gt_f_patch, start
+
+        if normalize:
+            img1 = (img1 - self.mean_I) / self.std_I
+            img2 = (img2 - self.mean_I) / self.std_I
+            # img1 = img1 / 255.
+            # img2 = img2 / 255.
+
+        if gray:
+            img1 = np.mean(img1, axis=2, keepdims=True)
+            img2 = np.mean(img2, axis=2, keepdims=True)
+
+        img1, img2 = list(map(torch.Tensor, [img1, img2]))
+
+        img1, img2, img1_patch, img2_patch, flow_gt_b, flow_gt_f, flow_gt_b_patch, flow_gt_f_patch, start \
+            = random_crop_tt(img1, img2, homo_gt, homo_gt_inv, start)
+
+        return img1, img2, img1_patch, img2_patch, flow_gt_b, flow_gt_f, flow_gt_b_patch, flow_gt_f_patch, start
+
 
 class HomoTestData(Dataset):
 
@@ -172,27 +368,23 @@ def fetch_dataloader(params):
         data: (dict) contains the DataLoader object for each type in types
     """
 
-    # for psedo labels generating
-    # train_ds = GanHomoTrainData(params, phase='em2')
-    # train_ds = UnHomoTrainData(params, phase='train')
-    # train_ds = ConcatDataset([UnHomoTrainData(
-    #     params, phase='train'), UnHomoTrainDataSup(params, phase='train')])
+    train_ds = DGMTrainData(params, phase='train')
     val_ds = HomoTestData(params, phase='val')
     test_ds = HomoTestData(params, phase='test')
 
     dataloaders = {}
     # add defalt train data loader
-    # train_dl = DataLoader(
-    #     train_ds,
-    #     batch_size=params.train_batch_size,
-    #     shuffle=True,
-    #     num_workers=params.num_workers,
-    #     pin_memory=params.cuda,
-    #     drop_last=True,
-    #     worker_init_fn=worker_init_fn,
-    #     collate_fn=collate_fn,
-    # )
-    dataloaders["train"] = None
+    train_dl = DataLoader(
+        train_ds,
+        batch_size=params.train_batch_size,
+        shuffle=True,
+        num_workers=params.num_workers,
+        pin_memory=params.cuda,
+        drop_last=True,
+        worker_init_fn=worker_init_fn,
+        collate_fn=collate_fn,
+    )
+    dataloaders["train"] = train_dl
 
     # chosse val or test data loader for evaluate
     for split in ["val", "test"]:
