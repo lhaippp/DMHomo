@@ -1,11 +1,6 @@
 # DMHomo: Learning Homography with Diffusion Models
 [dl.acm.org/doi/10.1145/3652207](https://dl.acm.org/doi/10.1145/3652207)
 
-## To-Do List
-  1. Done! ~~Release the pre-trained models and inference code for the **HEM** (Homography Estimator Module) and **DGM** (Data Generator Module).~~
-  2. Done! ~~Release the generated dataset based on the [**CA-Homo Dataset**](https://github.com/JirongZhang/DeepHomography) and the trained **DGM**.~~
-  3. Release the training scripts for **HEM** and **DGM**.
-
 ## Data Generator Module (DGM)
 ### Inference
 We prepare the weights of DGM at: https://huggingface.co/Lhaippp/DMHomo/blob/main/DGM.pt
@@ -15,6 +10,10 @@ We pre-computed conditions (i.e., mask and homography) for generating training d
 cd DGM
 # the following code is tested under one 2080Ti GPU with 8 CPUs and 50G memory
 python dgm_sample.py -c DGM.pt --exp generate_trainset  --gpu_nums 2 -i 0 --s_step 32 --part 0 --bs 25
+```
+Process the generate trainset into single npy files for HEM training
+```
+python generate_nyps_to_single_case.py
 ```
 
 ### Train
@@ -55,6 +54,13 @@ We prepare the weights of HEM at: https://huggingface.co/Lhaippp/DMHomo/blob/mai
 ```
 # Please set the path of 'CA-Homo Dataset' by [test_data_dir] in HEM/experiments
 accelerate launch hem_evaluate.py --model_dir HEM/experiments --restore_file HEM.pth -ow
+```
+
+For training HEM
+```
+cd HEM
+# configs for stage-1 are set at HEM/experiments/params.json
+accelerate launch train.py --model_dir experiments
 ```
 
 ## Thanks

@@ -20,7 +20,7 @@ def unit_test(im1_im2, homo12, name):
 
 
 if __name__ == "__main__":
-    npys = glob.glob('/root/test/0521_lr5e-4_bs128/traindata/test/dataset/*npy*')
+    npys = glob.glob('traindata/test/dataset/*npy*')
     idx = 0
 
     for npy in npys:
@@ -44,7 +44,7 @@ if __name__ == "__main__":
                     is_head = False
                 idx += 1
                 print(idx)
-                np.save(f'/root/test/0521_lr5e-4_bs128/traindata/samples/{idx}.npy', {"img12": imgs[i], "homo12": homos[i]})
+                np.save(f'traindata/samples/{idx}.npy', {"img12": imgs[i], "homo12": homos[i]})
 
                 # if idx >= 100:
                 #     raise Exception('unit test')
