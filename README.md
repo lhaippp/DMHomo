@@ -61,6 +61,10 @@ For training HEM
 cd HEM
 # configs for stage-1 are set at HEM/experiments/params.json
 accelerate launch train.py --model_dir experiments
+
+# once finished the stage-1, you could obtain a pretrain model, e.g., 'val-best-0.38.pt'
+# configs for stage-2 are set at HEM/experiments/stage2/params.json
+accelerate launch train.py --model_dir experiments/stage2 --resume -ow --restore_file experiments/val-best-0.38.pt
 ```
 
 ## Thanks
