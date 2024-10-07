@@ -1,6 +1,8 @@
 # DMHomo: Learning Homography with Diffusion Models
 [dl.acm.org/doi/10.1145/3652207](https://dl.acm.org/doi/10.1145/3652207)
 
+author version manuscript: [google drive](https://drive.google.com/file/d/12YOKx60RtZSx8f7uLj7uGY_KzjpZc8TD/view?usp=sharing)
+
 ## Data Generator Module (DGM)
 ### Inference
 We prepare the weights of DGM at: https://huggingface.co/Lhaippp/DMHomo/blob/main/DGM.pt
